@@ -1,10 +1,10 @@
 from flask import Blueprint, render_template
 from flask_login import login_required, current_user
 
-profile_view_bp = Blueprint("profile_view", __name__)
+profile_pages_bp = Blueprint("profile_pages", __name__, url_prefix="/profile")
 
 
-@profile_view_bp.route("/")
+@profile_pages_bp.get("/")
 @login_required
 def profile_page():
     return render_template(
