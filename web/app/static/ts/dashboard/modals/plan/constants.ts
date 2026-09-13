@@ -1,4 +1,9 @@
-export const DAYS = [
+export interface PlanDay {
+    key: string;
+    short: string;
+}
+
+export const DAYS: PlanDay[] = [
     {
         key: "mon",
         short: "Пн"
