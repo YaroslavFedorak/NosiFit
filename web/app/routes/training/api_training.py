@@ -1,14 +1,19 @@
+from functools import lru_cache
+
 from flask import Blueprint, jsonify, request, current_app
 from flask_login import login_required, current_user
 from backend.app.extensions import db
 from backend.app.training.models.exercise import Exercise
 from backend.app.training.exercises.prescription import (
+    accepts_load,
     build_entry,
     is_duration_exercise,
     is_per_side,
     measurement_type_of,
+    performed_values,
     serialize_entry,
 )
+from backend.app.services.training.exercise_search import search_exercises
 from backend.app.training.models.muscle import Muscle
 from backend.app.training.models.equipment import TEEquipment
 from backend.app.training.models.user_pref import UserPreference
@@ -17,7 +22,7 @@ from backend.app.services.training.model import TrainingModelService
 from backend.app.training.training_analysis.recommendations_engine import (
     build_recommendations,
 )
-from backend.app.models.training_session import TrainingSession
+from backend.app.models.training_session import SessionExercise, TrainingSession
 from backend.app.training.models.training_plan import TrainingPlan
 from backend.app.training.models.performance_state import PerformanceState
 import datetime as dt
@@ -31,7 +36,9 @@ from backend.app.services.training.validation import (
     clean_fatigue as _clean_fatigue,
     clean_reps as _clean_reps,
     clean_set_data as _clean_set_data,
+    rir_from_rpe,
 )
+from web.app.i18n.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, load_translation
 
 APP_TIMEZONE = ZoneInfo("Europe/Warsaw")
 
@@ -222,6 +229,229 @@ def exercises():
                 "page": page,
                 "per_page": per_page,
                 "total": items.total,
+            }
+        )
+    except Exception as e:
+        return _error(e)
+
+
+SEARCH_LIMIT_MAX = 20
+RECENT_LIMIT_MAX = 20
+
+
+def _request_locale():
+    locale = request.args.get("locale") or DEFAULT_LOCALE
+    return locale if locale in SUPPORTED_LOCALES else DEFAULT_LOCALE
+
+
+@lru_cache(maxsize=len(SUPPORTED_LOCALES))
+def _exercise_names(locale):
+    """slug -> exercise name in ``locale`` (falls back to Ukrainian)."""
+    return {
+        slug: item["name"]
+        for slug, item in load_translation(locale, "exercises").items()
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+
+
+def _bounded_arg(name, default, low, high):
+    value = request.args.get(name, default, type=int)
+    return default if value is None else max(low, min(value, high))
+
+
+def _exercise_brief(exercise, names):
+    return {
+        "id": exercise.id,
+        "slug": exercise.slug,
+        "name": names.get(exercise.slug) or exercise.name,
+        "measurement_type": measurement_type_of(exercise),
+        "load_type": exercise.load_type,
+        "accepts_load": accepts_load(exercise),
+        "per_side": is_per_side(exercise),
+    }
+
+
+def _logged_values(exercise, session_exercise):
+    """What was done in one session row, in the units the client logs."""
+    values = performed_values(session_exercise, exercise)
+    if is_duration_exercise(exercise):
+        reps = reps_count = None
+        duration_sec = values["duration_sec"] or None
+    else:
+        reps = session_exercise.reps_done or session_exercise.reps_planned or None
+        reps_count = values["reps"] or None
+        duration_sec = None
+    return {
+        "sets": values["sets"],
+        "reps": reps,
+        "reps_count": reps_count,
+        "duration_sec": duration_sec,
+        "load": values["load"] or None,
+        "rir": rir_from_rpe(session_exercise.rpe),
+        # As stored, so a client re-sending the workout keeps it exact.
+        "rpe": session_exercise.rpe,
+    }
+
+
+def _today_utc_bounds():
+    today = _local_today()
+    start = dt.datetime.combine(today, dt.time.min, tzinfo=APP_TIMEZONE)
+    end = dt.datetime.combine(today + dt.timedelta(days=1), dt.time.min, tzinfo=APP_TIMEZONE)
+    return (
+        start.astimezone(dt.timezone.utc).replace(tzinfo=None),
+        end.astimezone(dt.timezone.utc).replace(tzinfo=None),
+    )
+
+
+def _latest_session_today(user_id):
+    start, end = _today_utc_bounds()
+    return (
+        TrainingSession.query.filter(
+            TrainingSession.user_id == user_id,
+            TrainingSession.started_at >= start,
+            TrainingSession.started_at < end,
+        )
+        .order_by(TrainingSession.started_at.desc(), TrainingSession.id.desc())
+        .first()
+    )
+
+
+def _catalog_rows(exercise_ids):
+    if not exercise_ids:
+        return {}
+    return {
+        exercise.id: exercise
+        for exercise in Exercise.query.filter(Exercise.id.in_(list(exercise_ids)))
+    }
+
+
+def _with_last(exercises, names, user_id):
+    """Brief exercise info plus what the user did last time (before today)."""
+    today_session = _latest_session_today(user_id)
+    last = {
+        row.exercise_id: row
+        for row in TrainingSessionService.last_performed(
+            user_id,
+            exercise_ids=[exercise.id for exercise in exercises],
+            limit=len(exercises),
+            exclude_session_id=today_session.id if today_session else None,
+        )
+    }
+    return [
+        {
+            **_exercise_brief(exercise, names),
+            "last": (
+                _logged_values(exercise, last[exercise.id]) if exercise.id in last else None
+            ),
+        }
+        for exercise in exercises
+    ]
+
+
+@training_api_bp.route("/exercises/search")
+@login_required
+def search_exercise_catalog():
+    """Exercises matching ``q`` by localized name, English name or slug,
+    with typo tolerance. Exercises the user has done rank first."""
+    try:
+        query = (request.args.get("q") or "").strip()
+        limit = _bounded_arg("limit", 8, 1, SEARCH_LIMIT_MAX)
+        offset = _bounded_arg("offset", 0, 0, 1000)
+        if not query:
+            return jsonify({"items": [], "query": "", "has_more": False})
+
+        names = _exercise_names(_request_locale())
+        done_ids = {
+            exercise_id
+            for (exercise_id,) in db.session.query(SessionExercise.exercise_id)
+            .join(TrainingSession, SessionExercise.session_id == TrainingSession.id)
+            .filter(TrainingSession.user_id == current_user.id)
+            .distinct()
+        }
+        found = search_exercises(
+            Exercise.query.all(),
+            names,
+            query,
+            limit=limit + 1,
+            offset=offset,
+            done_ids=done_ids,
+        )
+        return jsonify(
+            {
+                "items": _with_last(found[:limit], names, current_user.id),
+                "query": query,
+                "has_more": len(found) > limit,
+            }
+        )
+    except Exception as e:
+        return _error(e)
+
+
+@training_api_bp.route("/exercises/recent")
+@login_required
+def recent_exercises():
+    """Exercises the user did most recently (before today), newest first."""
+    try:
+        limit = _bounded_arg("limit", 8, 1, RECENT_LIMIT_MAX)
+        today_session = _latest_session_today(current_user.id)
+        rows = TrainingSessionService.last_performed(
+            current_user.id,
+            limit=limit,
+            exclude_session_id=today_session.id if today_session else None,
+        )
+        catalog = _catalog_rows(row.exercise_id for row in rows)
+        names = _exercise_names(_request_locale())
+        return jsonify(
+            {
+                "items": [
+                    {
+                        **_exercise_brief(catalog[row.exercise_id], names),
+                        "last": _logged_values(catalog[row.exercise_id], row),
+                    }
+                    for row in rows
+                    if row.exercise_id in catalog
+                ]
+            }
+        )
+    except Exception as e:
+        return _error(e)
+
+
+@training_api_bp.route("/sessions/today")
+@login_required
+def today_logged_session():
+    """The user's latest session started today (server calendar), if any.
+
+    Clients edit it by sending the whole list to /sessions/complete with its
+    ``id`` as ``session_id``.
+    """
+    try:
+        session = _latest_session_today(current_user.id)
+        if session is None:
+            return jsonify({"session": None})
+
+        rows = sorted(session.exercises, key=lambda row: row.id)
+        catalog = _catalog_rows(row.exercise_id for row in rows)
+        names = _exercise_names(_request_locale())
+        exercises = [
+            {
+                **_exercise_brief(catalog[row.exercise_id], names),
+                **_logged_values(catalog[row.exercise_id], row),
+            }
+            for row in rows
+            if row.exercise_id in catalog
+        ]
+        return jsonify(
+            {
+                "session": {
+                    "id": session.id,
+                    "status": session.status,
+                    "exercises": exercises,
+                    "totals": {
+                        "exercises": len(exercises),
+                        "sets": sum(item["sets"] for item in exercises),
+                    },
+                }
             }
         )
     except Exception as e:
@@ -519,6 +749,19 @@ def _completed_session_payload(session):
     }
 
 
+def _empty_session_payload(deleted):
+    return {
+        "id": None,
+        "deleted": deleted,
+        "rpe_avg": None,
+        "internal_load": 0,
+        "hard_sets": 0.0,
+        "session_training_stress_proxy": 0.0,
+        "volume_load_kg": 0.0,
+        "muscle_sets": {},
+    }
+
+
 @training_api_bp.route("/sessions/complete", methods=["POST"])
 @login_required
 def complete_session():
@@ -549,12 +792,25 @@ def complete_session():
                             "duration_sec_done": item.get("duration_sec"),
                             "load_done": item.get("load"),
                             "rpe": item.get("rpe"),
+                            **({"rir": item["rir"]} if "rir" in item else {}),
                         }
                     ),
                 )
             )
 
         saved = _saved_workout_today(data.get("session_id"))
+        if saved is None and data.get("session_id") is not None and data.get("strict") is True:
+            # Strict clients (the Telegram bot) edit one known session; a
+            # stale id (another day, deleted) must not start a new one with
+            # yesterday's exercises.
+            return jsonify({"error": "session_not_found"}), 404
+        if not exercises:
+            # Deleting the last exercise removes the session; an empty save
+            # never creates one.
+            if saved is not None:
+                TrainingSessionService.delete_session(saved)
+            return jsonify(_empty_session_payload(deleted=saved is not None))
+
         if saved is not None:
             session = TrainingSessionService.replace_exercises(
                 saved, exercises, fatigue_after

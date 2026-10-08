@@ -8,8 +8,10 @@ Telegram sessions
     - gets no "remember me" cookie (it could restore an unmarked session);
     - may only call the API the bot needs. Changing email or password,
       deleting the account and (dis)connecting sign-in methods stay with
-      browser sessions, so a lost Telegram account exposes nutrition data,
-      not control over the NosiFit account.
+      browser sessions, so a lost Telegram account exposes nutrition and
+      workout logs, not control over the NosiFit account. Of the training
+      API only workout logging is open (sessions and exercise search);
+      plans, tests and analytics stay with the website.
 
 Pending link
     /auth/telegram/link/<token> keeps the token's hash in the session while
@@ -37,8 +39,18 @@ RECENT_AUTH_SECONDS = 15 * 60
 
 # Paths a Telegram session may use (everything the bot calls). The
 # /api/telegram/ endpoints check the bot's signature, not the session.
-TELEGRAM_SESSION_PREFIXES = ("/api/nutrition/", "/api/telegram/")
-TELEGRAM_SESSION_PATHS = frozenset({"/auth/logout"})
+TELEGRAM_SESSION_PREFIXES = (
+    "/api/nutrition/",
+    "/api/telegram/",
+    "/api/training/sessions/",
+)
+TELEGRAM_SESSION_PATHS = frozenset(
+    {
+        "/auth/logout",
+        "/api/training/exercises/search",
+        "/api/training/exercises/recent",
+    }
+)
 
 
 def start_telegram_session(user, identity) -> None:

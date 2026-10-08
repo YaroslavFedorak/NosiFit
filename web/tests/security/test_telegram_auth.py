@@ -494,6 +494,43 @@ def test_telegram_session_cannot_manage_the_account(client, victim_identity, met
     assert victim.email == "victim@example.com"
 
 
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("get", "/api/training/sessions/today"),
+        ("get", "/api/training/exercises/search?q=plank"),
+        ("get", "/api/training/exercises/recent"),
+        ("post", "/api/training/sessions/complete"),
+    ],
+)
+def test_telegram_session_can_log_workouts(client, victim_identity, method, path):
+    bot_post(client, "/api/telegram/login", tg_payload())
+
+    response = getattr(client, method)(path, json={"exercises": []}) if method == "post" else client.get(path)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("get", "/api/training/plans"),
+        ("post", "/api/training/plans"),
+        ("post", "/api/training/strength-test"),
+        ("get", "/api/training/analytics"),
+        ("get", "/api/training/exercises"),
+        ("get", "/api/training/exercises/search/extra"),
+    ],
+)
+def test_telegram_session_cannot_reach_the_rest_of_the_training_api(client, victim_identity, method, path):
+    bot_post(client, "/api/telegram/login", tg_payload())
+
+    response = getattr(client, method)(path, json={}) if method == "post" else client.get(path)
+
+    assert response.status_code == 403
+    assert response.get_json()["code"] == "telegram_session_scope"
+
+
 def test_disconnecting_telegram_revokes_bot_sessions(client, victim_identity):
     bot_post(client, "/api/telegram/login", tg_payload())
     assert client.get("/api/nutrition/water").status_code == 200

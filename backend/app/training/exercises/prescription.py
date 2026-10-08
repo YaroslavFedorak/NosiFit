@@ -10,7 +10,12 @@ prescription and means the reps or seconds are done on each side.
 import re
 from typing import Any, Dict, Mapping
 
-from .catalog import MEASUREMENT_DURATION, MEASUREMENT_REPS
+from .catalog import (
+    LOAD_BODYWEIGHT,
+    LOAD_TYPES_REQUIRING_KG,
+    MEASUREMENT_DURATION,
+    MEASUREMENT_REPS,
+)
 
 DEFAULT_SETS = 3
 DEFAULT_REPS = "8-12"
@@ -69,6 +74,15 @@ def _prescription(exercise: Any) -> Dict[str, Any]:
 
 def is_per_side(exercise: Any) -> bool:
     return bool(_prescription(exercise).get("per_side"))
+
+
+def accepts_load(exercise: Any) -> bool:
+    """Whether a logged kg value means something: external, machine and cable
+    loads, or extra weight on a bodyweight exercise that allows it."""
+    load_type = _get(exercise, "load_type")
+    if load_type in LOAD_TYPES_REQUIRING_KG:
+        return True
+    return load_type == LOAD_BODYWEIGHT and bool(_get(exercise, "max_additional_load_kg"))
 
 
 def default_entry(exercise: Any) -> Dict[str, Any]:

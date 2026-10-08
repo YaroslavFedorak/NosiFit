@@ -87,9 +87,11 @@ immediately ends every bot session of that Telegram account.
   id. Treat it like `SECRET_KEY`.
 - **Bot sessions** are normal NosiFit sessions with no "remember me" cookie,
   revoked when the Telegram identity is disconnected, the password changes or
-  the account is deleted. They can only use the nutrition API: changing email
-  or password, deleting the account and (dis)connecting sign-in methods need
-  a browser session.
+  the account is deleted. They can only use the nutrition API and the workout
+  logging part of the training API (`/api/training/sessions/*`, exercise
+  search and recent exercises); plans, tests, analytics, changing email or
+  password, deleting the account and (dis)connecting sign-in methods need a
+  browser session.
 - **Private chats only.** Group, supergroup and channel updates and messages
   from other bots are dropped; the bot leaves groups it is added to.
 - **No secrets in chat or logs.** Verification codes are deleted from the
@@ -118,6 +120,43 @@ System and user-owned products are returned by the existing nutrition API, inclu
 Meals are stored with language-independent category keys (`breakfast`, `lunch`, `dinner`, `snack`). The bot shows Ukrainian names and reuses an existing meal of the same type for today instead of creating a duplicate.
 
 Amounts are validated before they are sent (up to 5000 g / ml or 100 pcs per entry). Backend errors carry a `code` and are shown in Ukrainian.
+
+## Training
+
+**🏋️ Тренування** logs today's workout in the stored model: per exercise
+sets x reps (or seconds) x kg and RIR. There are no separate per-set rows, so
+"60x10, 60x9" is kept as one exercise with its current values, like on the
+website.
+
+1. The training screen is today's workout (or "Сьогодні ще немає вправ") with
+   recent exercises as one-tap buttons.
+2. Typing a name searches the exercise catalog by Ukrainian or English name
+   or slug, with typos (`GET /api/training/exercises/search`); exercises done
+   before rank first.
+3. An exercise card shows last time's values and prefills them. "➕ Підхід"
+   logs one more set with the values on the button; ±1 rep, ±2.5 kg (±5 s)
+   and RIR buttons change them. Typing `60 10` or `60 10 2` (kg, reps, RIR)
+   logs a set; bodyweight exercises take `12` / `12 2`, extra weight `10x12`.
+4. Typing the next name opens the next exercise; "← Тренування" returns.
+5. "✅ Завершити" asks once and shows the totals the server has.
+
+Every change is saved at once: the bot sends the whole list to
+`POST /api/training/sessions/complete` with today's `session_id` (from
+`GET /api/training/sessions/today`) and `strict: true`, so the server
+replaces that session's exercises and never creates a duplicate. A stale id
+(e.g. after midnight) is rejected instead of copied into a new session.
+Removing the last exercise deletes the session. Values the bot did not
+change (reps "8-12", RPE 7.5 from the website) are sent back unchanged.
+
+Taps are serialised per user, and "one more set" / delete buttons carry the
+revision of the screen, so a double tap or a button on an old message does
+not repeat the action. `/cancel` leaves the flow; what is logged stays.
+
+Known limitation (follow-up): the website's workout page keeps its own list
+in the browser and does not load the server's session. If the page saved
+first that day, re-saving it replaces the session the bot also edits, and
+exercises logged from Telegram are lost. If the bot started the day, a save
+on the page creates a second session and the bot then shows the newer one.
 
 ## Water and weight
 
