@@ -2,8 +2,13 @@
 
 import re
 
+from backend.app.services.training.model import parameters as P
 from backend.app.training.models.exercise import Exercise
 from backend.app.utils.validation import ValidationError, bounded_number
+
+# Clients may rate a set as reps in reserve; it is stored as RPE, the scale
+# the training model reads (RIR = RPE_TO_RIR_OFFSET - RPE).
+MAX_LOGGED_RIR = 9
 
 # Repetitions are free text ("8-12", "8–12", "max"), but never markup.
 REPS_RE = re.compile(r"^[\w\s\-–—/+×.,]{1,16}$")
@@ -37,7 +42,20 @@ def clean_set_data(data):
         cleaned["load_done"] = bounded_number(data["load_done"], 0, 2000)
     if "rpe" in data:
         cleaned["rpe"] = bounded_number(data["rpe"], 0, 10)
+    if "rir" in data:
+        cleaned["rpe"] = rpe_from_rir(bounded_number(data["rir"], 0, MAX_LOGGED_RIR))
     return cleaned
+
+
+def rpe_from_rir(rir):
+    return None if rir is None else float(P.RPE_TO_RIR_OFFSET) - float(rir)
+
+
+def rir_from_rpe(rpe):
+    """Reps in reserve of a logged RPE; None when the set was not rated."""
+    if rpe is None or rpe <= 0:
+        return None
+    return max(int(round(float(P.RPE_TO_RIR_OFFSET) - float(rpe))), 0)
 
 
 def clean_fatigue(value):

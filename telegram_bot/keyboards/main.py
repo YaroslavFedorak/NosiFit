@@ -1,6 +1,7 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 NUTRITION = "🍽 Харчування"
+TRAINING = "🏋️ Тренування"
 WATER = "💧 Вода"
 WEIGHT = "⚖️ Вага"
 LOGIN = "🔐 Увійти"
@@ -18,7 +19,7 @@ def main_menu(*, authenticated: bool = False) -> ReplyKeyboardMarkup:
 
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=NUTRITION)],
+            [KeyboardButton(text=TRAINING), KeyboardButton(text=NUTRITION)],
             [KeyboardButton(text=WATER), KeyboardButton(text=WEIGHT)],
             [KeyboardButton(text=LOGOUT)],
         ],

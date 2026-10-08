@@ -21,7 +21,17 @@ ERROR_MESSAGES = {
     "entry_not_found": "Цей продукт уже видалено.",
     "nothing_to_copy": "Учора не було записів.",
     "product_not_found": "Цей продукт уже видалено.",
+    "session_not_found": "Тренування не знайдено — можливо, почався новий день.",
+    "telegram_session_scope": "Це доступно лише на сайті.",
 }
+
+
+def _json_or_empty(response: requests.Response) -> dict:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 @dataclass
@@ -44,6 +54,13 @@ class NosiFitAPI:
             )
         except requests.RequestException as exc:
             raise NosiFitAPIError("Не вдалося підключитися до NosiFit.") from exc
+        payload = _json_or_empty(response) if not response.ok else {}
+        # Each API reports its stable code in "code" (nutrition, auth) or
+        # "error" (training).
+        code = payload.get("code") or payload.get("error")
+        if response.status_code == 403 and code == "telegram_session_scope":
+            # The session is fine, the endpoint is just not open to the bot.
+            raise NosiFitAPIError(ERROR_MESSAGES[code], code)
         needs_login = response.status_code in (401, 403) or (
             response.is_redirect
             and "/auth/login" in response.headers.get("Location", "")
@@ -55,11 +72,6 @@ class NosiFitAPI:
                 "session_expired",
             )
         if not response.ok:
-            try:
-                payload = response.json()
-            except ValueError:
-                payload = {}
-            code = payload.get("code")
             detail = ERROR_MESSAGES.get(code) or "Щось пішло не так. Спробуйте ще раз."
             raise NosiFitAPIError(detail, code)
         return response
@@ -320,4 +332,49 @@ class NosiFitAPI:
         return self._request(
             "DELETE",
             f"/api/nutrition/products/{product_id}",
+        ).json()
+
+    # --- Training ---------------------------------------------------------
+
+    def search_exercises(
+        self, query: str, locale: str = "uk", limit: int = 8, offset: int = 0
+    ) -> dict:
+        """{"items": [...], "has_more": bool}; items carry "last" values."""
+        self.ensure_authenticated()
+        return self._request(
+            "GET",
+            "/api/training/exercises/search",
+            params={"q": query, "locale": locale, "limit": limit, "offset": offset},
+        ).json()
+
+    def get_recent_exercises(self, locale: str = "uk", limit: int = 6) -> list[dict]:
+        self.ensure_authenticated()
+        payload = self._request(
+            "GET",
+            "/api/training/exercises/recent",
+            params={"locale": locale, "limit": limit},
+        ).json()
+        return payload.get("items", [])
+
+    def get_today_session(self, locale: str = "uk") -> dict | None:
+        """Today's session (server calendar) or None."""
+        self.ensure_authenticated()
+        return self._request(
+            "GET",
+            "/api/training/sessions/today",
+            params={"locale": locale},
+        ).json().get("session")
+
+    def save_session(self, exercises: list[dict], session_id: int | None) -> dict:
+        """Replace the whole workout of today's session ``session_id``.
+
+        Without an id a new session is created; an empty list deletes the
+        session. ``strict``: a stale id is an error (session_not_found)
+        instead of silently starting another session.
+        """
+        self.ensure_authenticated()
+        return self._request(
+            "POST",
+            "/api/training/sessions/complete",
+            json={"session_id": session_id, "strict": True, "exercises": exercises},
         ).json()

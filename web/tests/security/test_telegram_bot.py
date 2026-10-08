@@ -68,9 +68,9 @@ class RecordingSession(BaseSession):
 
 def fresh_dispatcher():
     """Routers are module singletons; detach them from an earlier dispatcher."""
-    from telegram_bot.handlers import auth, common, nutrition, start, water, weight
+    from telegram_bot.handlers import auth, common, nutrition, start, training, water, weight
 
-    for module in (auth, common, nutrition, start, water, weight):
+    for module in (auth, common, nutrition, start, training, water, weight):
         module.router._parent_router = None
     return create_dispatcher()
 

@@ -143,6 +143,47 @@ class TrainingSessionService:
         return session
 
     @staticmethod
+    def delete_session(session):
+        """Remove a session whose last exercise was deleted.
+
+        Clearing it first through replace_exercises takes its share out of
+        the legacy cumulative PerformanceState.training_load.
+        """
+        TrainingSessionService.replace_exercises(session, [])
+        db.session.delete(session)
+        db.session.commit()
+
+    @staticmethod
+    def last_performed(user_id, exercise_ids=None, limit=8, exclude_session_id=None):
+        """Newest logged row per exercise, most recently done first.
+
+        Rows of ``exclude_session_id`` (usually today's session) are skipped
+        so they show what was done last time, not what is being logged now.
+        """
+        query = (
+            db.session.query(SessionExercise, TrainingSession.started_at)
+            .join(TrainingSession, SessionExercise.session_id == TrainingSession.id)
+            .filter(TrainingSession.user_id == user_id)
+        )
+        if exclude_session_id is not None:
+            query = query.filter(TrainingSession.id != exclude_session_id)
+        if exercise_ids is not None:
+            if not exercise_ids:
+                return []
+            query = query.filter(SessionExercise.exercise_id.in_(list(exercise_ids)))
+        rows = query.order_by(
+            TrainingSession.started_at.desc(), SessionExercise.id.desc()
+        ).limit(500)
+
+        seen = {}
+        for row, _ in rows:
+            if row.exercise_id not in seen:
+                seen[row.exercise_id] = row
+                if len(seen) >= limit:
+                    break
+        return list(seen.values())
+
+    @staticmethod
     def finish_session(session, fatigue_after=None):
         session.status = "finished"
         session.finished_at = datetime.utcnow()
