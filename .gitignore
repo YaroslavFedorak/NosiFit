@@ -48,3 +48,6 @@ node_modules/
 *.js.map
 *.d.ts
 tsconfig.tsbuildinfo
+# Local Claude Code state (test login for UI checks, agent worktrees)
+.claude/ui-test-user.txt
+.claude/worktrees/
