@@ -7,8 +7,8 @@ The custom emoji set the NosiFit bot will use in its messages. The style follows
 | calories | `--nf-orange` | 🔥 |
 | protein | `--nf-red` | 🥩 |
 | fat | `--nf-yellow-soft` | 🥑 |
-| carbs | `--nf-violet` | 🌾 |
-| fiber | `--nf-green` | 🥬 |
+| carbs | `--nf-violet` | 🍞 |
+| fiber | `--nf-green` | 🌾 |
 | sugar | `--nf-violet-soft` | 🍬 |
 | meal | `--nf-text-main` | 🍽️ |
 | water | `--nf-accent-water` | 💧 |
@@ -54,5 +54,5 @@ Every PNG was checked after downscaling to 20 and 24 px on light and dark backgr
 2. **Register.** Run `telegram_pack.py create --owner-id <your Telegram user id> --variant color` (or `mono`).
    This creates `nosifit_by_<bot>` and writes the real IDs into `icons.json`.
    If you made the pack by hand in @Stickers, run `telegram_pack.py ids --set <name>` instead.
-3. **Integrate.** Only then replace the emoji literals in `telegram_bot/handlers/*` with `<tg-emoji>` tags.
+3. **Integration is automatic.** `telegram_bot/custom_emoji.py` (registered in `bot.py`) wraps each fallback emoji in outgoing HTML messages with `<tg-emoji>` once its `custom_emoji_id` is set. Commit `icons.json` and redeploy the `bot` service.
    Test on Android and iOS, in both light and dark themes.
