@@ -68,7 +68,7 @@ def api(method: str, fields: dict | None = None, files: dict[str, Path] | None =
 
 
 def load_icons() -> dict:
-    return json.loads(ICONS.read_text())
+    return json.loads(ICONS.read_text(encoding="utf-8"))
 
 
 def default_set_name(prefix: str) -> str:
@@ -127,7 +127,7 @@ def write_ids(name: str) -> None:
     for key, emoji_id in found.items():
         data["icons"][key]["custom_emoji_id"] = emoji_id
     data["pack"] = name
-    ICONS.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    ICONS.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {len(found)} IDs to icons.json" + (f"; missing: {', '.join(missing)}" if missing else ""))
 
 

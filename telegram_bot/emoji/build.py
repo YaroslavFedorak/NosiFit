@@ -44,7 +44,7 @@ def find_chromium(explicit: str | None) -> str:
 
 
 def glyph(key: str, stroke: float) -> str:
-    svg = (ROOT / "src" / f"{key}.svg").read_text()
+    svg = (ROOT / "src" / f"{key}.svg").read_text(encoding="utf-8")
     inner = re.search(r"<svg[^>]*>(.*)</svg>", svg, re.S).group(1)
     return (
         f'<g fill="none" stroke="currentColor" stroke-width="{stroke}" '
@@ -70,7 +70,7 @@ def mono_svg(key: str) -> str:
 
 
 def render(chromium: str, html: str, out: Path, width: int, height: int) -> None:
-    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as f:
         f.write(html)
         page = f.name
     try:
@@ -115,7 +115,7 @@ def main() -> None:
     ap.add_argument("--chromium")
     chromium = find_chromium(ap.parse_args().chromium)
 
-    meta = json.loads((ROOT / "icons.json").read_text())
+    meta = json.loads((ROOT / "icons.json").read_text(encoding="utf-8"))
     icons, tile = meta["icons"], meta["tile"]
     for variant in ("color", "mono"):
         (ROOT / "png" / variant).mkdir(parents=True, exist_ok=True)
@@ -164,7 +164,7 @@ def write_preview(chromium: str, icons: dict) -> None:
         ".m img{vertical-align:-4px}"
         "</style></head><body>" + "".join(sections) + "</body></html>"
     )
-    (ROOT / "preview.html").write_text(html)
+    (ROOT / "preview.html").write_text(html, encoding="utf-8")
     render(chromium, html.replace("png/", f"file://{ROOT}/png/"), ROOT / "preview.png", 1100, 660)
     print("ok  preview.html, preview.png")
 
